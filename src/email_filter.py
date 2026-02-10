@@ -1,6 +1,6 @@
 # src/email_filter.py
 import re
-from typing import Dict, Optional, List
+from typing import Optional
 from dataclasses import dataclass
 
 @dataclass
@@ -175,7 +175,6 @@ class EmailFilter:
             return False
             
         airline_code = match.group(1)
-        flight_digits = match.group(2)
         
         # Validate against known airline codes
         if airline_code not in EmailFilter.AIRLINE_CODES:

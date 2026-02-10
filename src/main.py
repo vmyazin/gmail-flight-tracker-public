@@ -7,11 +7,12 @@ import argparse
 from datetime import datetime, timedelta
 import json
 import os
-from typing import List, Dict
-from parsers.flight_parser import parse_flight_email, format_flight_details
+from typing import List, Dict, Optional
+
+from dotenv import load_dotenv
+from parsers.flight_parser import format_flight_details
 from gmail_client import fetch_flight_emails
 from storage.email_storage import EmailStorage
-import re
 
 def deduplicate_flights(flights: List[Dict]) -> List[Dict]:
     """Remove duplicate flight entries based on key fields"""
@@ -66,21 +67,108 @@ def process_stored_emails(year: int = None, output_file: str = None, specific_fi
     print(f"\nProcessing {len(emails)} emails...")
     # ... rest of the function remains the same ...
 
+def _env_float(name: str) -> Optional[float]:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def _parse_start_date(year: int, start_date: str) -> Optional[datetime]:
+    try:
+        month_str, day_str = start_date.split("-", 1)
+        month = int(month_str)
+        day = int(day_str)
+        return datetime(year, month, day)
+    except Exception:
+        return None
+
+
+def _get_llm_api_key() -> Optional[str]:
+    return os.getenv("OPENAI_API_KEY")
+
+
 def main():
+    load_dotenv()
     parser = argparse.ArgumentParser(description='Gmail Flight Tracker')
     parser.add_argument('--year', type=int, default=datetime.now().year,
                       help='Year to search for flights (default: current year)')
     parser.add_argument('--days', type=int, default=365,
-                      help='Number of days to look forward from start of year')
+                      help='Number of days to look forward from start date')
+    parser.add_argument('--start-date', type=str, default='01-01',
+                      help='Start date to look forward from, MM-DD (default: 01-01)')
     parser.add_argument('--use-sample', action='store_true',
                       help='Use sample data instead of Gmail API')
     parser.add_argument('--fetch-only', action='store_true',
                       help='Only fetch and store emails, do not process them')
     parser.add_argument('--process-only', action='store_true',
                       help='Only process previously fetched emails')
+    parser.add_argument('--use-llm', action='store_true',
+                      help='Use LLM extraction when regex parsing fails')
+    parser.add_argument('--llm-filter', action='store_true',
+                      help='Use LLM to filter itinerary-related emails before parsing')
+    parser.add_argument('--llm-filter-threshold', type=float, default=0.6,
+                      help='Confidence threshold to skip non-itinerary emails (default: 0.6)')
+    parser.add_argument('--llm-filter-max-body-chars', type=int, default=None,
+                      help='Max body chars for LLM filter (default: use --llm-max-body-chars)')
+    parser.add_argument('--llm-filter-output-tokens', type=int, default=60,
+                      help='Expected output tokens for LLM filter (default: 60)')
+    parser.add_argument('--llm-model', type=str, default='gpt-5-mini',
+                      help='LLM model to use (default: gpt-5-mini)')
+    parser.add_argument('--llm-max-body-chars', type=int, default=4000,
+                      help='Max email body chars to send to LLM (default: 4000)')
+    parser.add_argument('--llm-output-tokens', type=int, default=300,
+                      help='Expected output tokens per email (default: 300)')
+    parser.add_argument('--llm-prompt-overhead', type=int, default=200,
+                      help='Prompt overhead tokens per email (default: 200)')
+    parser.add_argument('--llm-input-rate', type=float, default=_env_float('LLM_INPUT_COST_PER_M_TOKENS'),
+                      help='Input cost per 1M tokens (default: env LLM_INPUT_COST_PER_M_TOKENS)')
+    parser.add_argument('--llm-output-rate', type=float, default=_env_float('LLM_OUTPUT_COST_PER_M_TOKENS'),
+                      help='Output cost per 1M tokens (default: env LLM_OUTPUT_COST_PER_M_TOKENS)')
+    parser.add_argument('--llm-dry-run', action='store_true',
+                      help='Estimate LLM cost and exit without calling the API')
+    parser.add_argument('--llm-approve', action='store_true',
+                      help='Skip confirmation prompt for LLM extraction')
+    parser.add_argument('--openai-models', action='store_true',
+                      help='List available OpenAI models and optionally select one')
+    parser.add_argument('--openai-models-prefix', type=str, default=None,
+                      help='Filter OpenAI model list by prefix (e.g., gpt-)')
+    parser.add_argument('--relax-query', action='store_true',
+                      help='Relax Gmail query to date range only (recommended with --llm-filter)')
     args = parser.parse_args()
+
+    if args.openai_models:
+        from llm.models import choose_model_interactive, list_openai_models
+
+        api_key = _get_llm_api_key()
+        if api_key is None:
+            print("OPENAI_API_KEY is not set. Cannot list models.")
+            return
+        try:
+            models = list_openai_models(api_key)
+        except RuntimeError as exc:
+            print(str(exc))
+            return
+
+        if args.openai_models_prefix:
+            models = [model for model in models if model.startswith(args.openai_models_prefix)]
+
+        if not models:
+            print("No models found for the requested filter.")
+            return
+
+        selected = choose_model_interactive(models, args.llm_model)
+        if selected:
+            args.llm_model = selected
+
+        if not (args.use_llm or args.llm_filter):
+            return
     
     storage = EmailStorage()
+    latest_file = None
     
     # Handle fetch vs process modes
     if args.fetch_only and args.process_only:
@@ -89,7 +177,12 @@ def main():
         
     # Fetch mode
     if not args.process_only:
-        print(f"Loading emails for {args.year} (looking forward {args.days} days from start of year)...")
+        start_date = _parse_start_date(args.year, args.start_date)
+        if start_date is None:
+            print("Error: Invalid --start-date. Use MM-DD (e.g., 01-15).")
+            return
+
+        print(f"Loading emails for {args.year} (looking forward {args.days} days from {start_date.date()})...")
         
         if args.use_sample:
             # Load sample data
@@ -99,7 +192,6 @@ def main():
                 return
                 
             emails = []
-            start_date = datetime(args.year, 1, 1)
             end_date = start_date + timedelta(days=args.days)
             print(f"Looking for emails between {start_date.date()} and {end_date.date()}")
             
@@ -125,16 +217,18 @@ def main():
             print(f"Found {len(emails)} emails in the specified date range")
         else:
             # Use Gmail API
-            emails = fetch_flight_emails(args.year, args.days)
+            query_mode = "relaxed" if args.relax_query or args.llm_filter else "strict"
+            emails = fetch_flight_emails(args.year, args.days, start_date=start_date, query_mode=query_mode)
         
         # Save fetched emails
         if emails:
             saved_path = storage.save_emails(emails, args.year)
             print(f"Saved {len(emails)} emails to {saved_path}")
+            latest_file = saved_path
     
     # Process mode
     if not args.fetch_only:
-        from process_emails import process_stored_emails
+        from process_emails import process_stored_emails, LlmSettings
         output_file = f"data/processed/flights_{args.year}.json"
         
         # If process-only, look for most recent email file for the year
@@ -149,8 +243,32 @@ def main():
             # Sort by timestamp to get most recent
             latest_file = sorted(email_files)[-1]
             print(f"Processing most recent file: {latest_file}")
+        elif latest_file is None:
+            # Fallback to most recent stored file if nothing was just fetched.
+            email_files = storage.get_email_files(args.year)
+            if email_files:
+                latest_file = sorted(email_files)[-1]
         
-        flights = process_stored_emails(args.year, output_file, latest_file)
+    llm_settings = None
+    if args.use_llm or args.llm_filter:
+        llm_settings = LlmSettings(
+            model=args.llm_model,
+            max_body_chars=args.llm_max_body_chars,
+            input_cost_per_million=args.llm_input_rate,
+            output_cost_per_million=args.llm_output_rate,
+            expected_output_tokens=args.llm_output_tokens,
+            prompt_overhead_tokens=args.llm_prompt_overhead,
+            dry_run=args.llm_dry_run,
+            auto_approve=args.llm_approve,
+            api_key=_get_llm_api_key(),
+            use_extraction=args.use_llm,
+            classify_itinerary=args.llm_filter,
+            classify_threshold=args.llm_filter_threshold,
+            classify_max_body_chars=args.llm_filter_max_body_chars or args.llm_max_body_chars,
+            classify_output_tokens=args.llm_filter_output_tokens,
+        )
+
+        flights = process_stored_emails(args.year, output_file, latest_file, llm_settings=llm_settings)
         
         if flights:
             print(f"\nFound {len(flights)} unique flights:\n")

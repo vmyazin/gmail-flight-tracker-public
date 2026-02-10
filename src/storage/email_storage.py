@@ -57,13 +57,40 @@ class EmailStorage:
                 with open(specific_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     return data.get('emails', [])
+            if specific_file:
+                # Try within storage directory if a relative name was provided.
+                candidate = os.path.join(self.storage_dir, specific_file)
+                if os.path.exists(candidate):
+                    with open(candidate, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        return data.get('emails', [])
                     
             # Default email directory
-            email_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                                    'data', 'raw_emails')
+            email_dir = self.storage_dir
             
             if not os.path.exists(email_dir):
                 return []
+
+            if year is not None:
+                pattern = f"emails_{year}_*.json"
+                filenames = [
+                    filename for filename in os.listdir(email_dir)
+                    if fnmatch.fnmatch(filename, pattern)
+                ]
+            else:
+                filenames = [
+                    filename for filename in os.listdir(email_dir)
+                    if filename.endswith('.json')
+                ]
+
+            for filename in sorted(filenames):
+                filepath = os.path.join(email_dir, filename)
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        emails.extend(data.get('emails', []))
+                except Exception:
+                    continue
                 
             return emails
             
@@ -84,7 +111,7 @@ class EmailStorage:
                 with open(filepath, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     years.add(data['metadata']['year'])
-            except:
+            except Exception:
                 continue
         
         return sorted(list(years)) 

@@ -48,3 +48,6 @@ ENV/
 
 # MacOS
 .DS_Store
+
+# Export config (local)
+export/public_repo.path

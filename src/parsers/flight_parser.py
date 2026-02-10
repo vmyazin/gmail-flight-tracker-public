@@ -5,9 +5,8 @@
 
 import re
 import logging
-from datetime import datetime
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import Dict, Optional
 
 # Add logging configuration
 logging.basicConfig(level=logging.DEBUG)
@@ -62,10 +61,26 @@ def _detect_airline(subject: str, body: str, from_addr: str) -> str:
     """Detect airline from email content"""
     # Check subject first
     airline_keywords = {
-        'VietJet Air': ['vietjet', 'vjet'],
+        'VietJet Air': ['vietjet', 'vjet air'],
         'AirAsia': ['airasia', 'air asia'],
-        'Vietnam Airlines': ['vietnam airlines'],
-        'Cebu Pacific': ['cebu pacific']
+        'Vietnam Airlines': ['vietnam airlines', 'vietnamairlines'],
+        'Cebu Pacific': ['cebu pacific', 'cebu pacific air'],
+        'LATAM Airlines': ['latam airlines', 'latam'],
+        'Delta Air Lines': ['delta air lines', 'delta airlines'],
+        'United Airlines': ['united airlines'],
+        'American Airlines': ['american airlines'],
+        'Southwest Airlines': ['southwest airlines'],
+        'JetBlue': ['jetblue', 'jet blue'],
+        'Avianca': ['avianca'],
+        'Iberia': ['iberia'],
+        'TAP Air Portugal': ['tap air portugal', 'tap portugal'],
+        'Ryanair': ['ryanair'],
+        'easyJet': ['easyjet', 'easy jet'],
+        'Copa Airlines': ['copa airlines', 'copa air'],
+        'AeroMexico': ['aeromexico'],
+        'Aerolineas Argentinas': ['aerolineas argentinas'],
+        'Azul': ['azul linhas', 'azul linhas aereas'],
+        'GOL': ['gol linhas', 'gol linhas aereas'],
     }
     
     combined_text = f"{subject} {body}".lower()
@@ -79,7 +94,28 @@ def _detect_airline(subject: str, body: str, from_addr: str) -> str:
         'vietjetair.com': 'VietJet Air',
         'airasia.com': 'AirAsia',
         'vietnamairlines.com': 'Vietnam Airlines',
-        'cebu-pacific.com': 'Cebu Pacific'
+        'cebu-pacific.com': 'Cebu Pacific',
+        'cebupacific.com': 'Cebu Pacific',
+        'mycebupacific.com': 'Cebu Pacific',
+        'latam.com': 'LATAM Airlines',
+        'delta.com': 'Delta Air Lines',
+        'o.delta.com': 'Delta Air Lines',
+        'united.com': 'United Airlines',
+        'aa.com': 'American Airlines',
+        'southwest.com': 'Southwest Airlines',
+        'jetblue.com': 'JetBlue',
+        'avianca.com': 'Avianca',
+        'iberia.com': 'Iberia',
+        'tap.pt': 'TAP Air Portugal',
+        'ryanair.com': 'Ryanair',
+        'easyjet.com': 'easyJet',
+        'copaair.com': 'Copa Airlines',
+        'aeromexico.com': 'AeroMexico',
+        'aerolineas.com.ar': 'Aerolineas Argentinas',
+        'voeazul.com.br': 'Azul',
+        'azul.com.br': 'Azul',
+        'voegol.com.br': 'GOL',
+        'gol.com.br': 'GOL',
     }
     
     for domain, airline in airline_domains.items():
@@ -121,7 +157,7 @@ def _parse_vietjet_email(subject: str, body: str) -> Optional[FlightInfo]:
     # More flexible airport patterns
     airport_patterns = [
         r'(?:From|Departure):\s*([A-Z]{3})\s+(?:To|Arrival):\s*([A-Z]{3})',
-        r'([A-Z]{3})\s*(?:to|→)\s*([A-Z]{3})',
+        r'([A-Z]{3})\s*(?:to|->|-)\s*([A-Z]{3})',
         r'([A-Z]{3})[^A-Z]{1,20}([A-Z]{3})',
     ]
     
@@ -170,22 +206,31 @@ def _parse_vietjet_email(subject: str, body: str) -> Optional[FlightInfo]:
 def _parse_generic_email(subject: str, body: str, from_addr: str) -> Optional[FlightInfo]:
     """Parse generic flight confirmation email"""
     # Add more common patterns for third-party booking services
+    iata_token = r'(?<![A-Z])(?-i:([A-Z]{3}))(?![A-Z])'
     flight_patterns = [
-        r'(?:Flight|Flight\s+Number):\s*([A-Z]{2}\s*\d{3,4})',
-        r'([A-Z]{2}\s*\d{3,4})\s+(?:to|→)',
-        r'Flight:\s*([A-Z]{2}\s*\d{3,4})',
-        r'Flight\s+([A-Z]{2}\s*\d{3,4})',
+        r'(?i)(?:flight|flight\s+number|voo|n[o0]?\s*de\s*voo|numero\s*do\s*voo|'
+        r'vuelo|numero\s*de\s*vuelo|n[o0]\s*de\s*vuelo)\s*[:#]?\s*'
+        r'((?-i:[A-Z0-9]{2,3})\s*\d{1,4})',
+        r'(?i)(?:flight|voo|vuelo)\s*[:#]?\s*((?-i:[A-Z0-9]{2,3})\s*\d{1,4})',
+        r'\b((?-i:[A-Z0-9]{2,3})\s*\d{1,4})\b\s*(?:to|->|-)',
     ]
     
     airport_patterns = [
-        r'([A-Z]{3})\s*(?:to|→)\s*([A-Z]{3})',
-        r'Departure:\s*([A-Z]{3}).*Arrival:\s*([A-Z]{3})',
-        r'From\s*:\s*([A-Z]{3})[^A-Z]*To\s*:\s*([A-Z]{3})',
-        r'(?:From|Departure)[^A-Z]*([A-Z]{3})[^A-Z]*(?:To|Arrival)[^A-Z]*([A-Z]{3})',
+        rf'(?i)(?:from|de|desde|origem|origen|departure|salida)\s*[:\-]?\s*'
+        rf'(?:[^\n\r]{{0,50}}?)\(?\s*{iata_token}\s*\)?\s*'
+        rf'(?:to|para|ate|a|hasta|destino|arrival|chegada|llegada)\s*[:\-]?\s*'
+        rf'(?:[^\n\r]{{0,50}}?)\(?\s*{iata_token}\s*\)?',
+        rf'(?i)\(?\s*{iata_token}\s*\)?\s*'
+        rf'(?:to|para|a|hasta|->|-)\s*'
+        rf'\(?\s*{iata_token}\s*\)?',
+        rf'{iata_token}\s*(?:to|->|-)\s*{iata_token}',
     ]
     
     confirmation_patterns = [
-        r'(?:Confirmation|Booking|Reference|PNR|Reservation)(?:\s+(?:Code|Number|#))?\s*[:# ]\s*([A-Z0-9]{5,8})',
+        r'(?i)(?:confirmation|confirmacion|confirmacao|'
+        r'booking|reserva|reservacion|reference|referencia|'
+        r'pnr|reservation|localizador|codigo\s+de\s+reserva|'
+        r'codigo\s+de\s+confirmacion)\s*(?:code|number|#)?\s*[:# ]\s*([A-Z0-9]{5,8})',
         r'#\s*([A-Z0-9]{5,8})',
     ]
     
@@ -194,17 +239,21 @@ def _parse_generic_email(subject: str, body: str, from_addr: str) -> Optional[Fl
     for pattern in flight_patterns:
         match = re.search(pattern, body + ' ' + subject, re.IGNORECASE)
         if match:
-            flight_number = match.group(1).replace(' ', '')
-            logger.debug(f"Found flight number: {flight_number}")
-            break
+            candidate = match.group(1).replace(' ', '')
+            if any(ch.isalpha() for ch in candidate):
+                flight_number = candidate
+                logger.debug(f"Found flight number: {flight_number}")
+                break
     
     airports = None
     for pattern in airport_patterns:
         match = re.search(pattern, body + ' ' + subject, re.IGNORECASE)
         if match:
-            airports = (match.group(1), match.group(2))
-            logger.debug(f"Found airports: {airports[0]} -> {airports[1]}")
-            break
+            candidate = (match.group(1), match.group(2))
+            if candidate[0] != candidate[1]:
+                airports = candidate
+                logger.debug(f"Found airports: {airports[0]} -> {airports[1]}")
+                break
     
     confirmation = None
     for pattern in confirmation_patterns:
@@ -240,4 +289,3 @@ From: {flight['departure_airport']}
 To: {flight['arrival_airport']}
 Departure: {flight['departure_datetime']}
 Confirmation: {flight['confirmation_code']}"""
-
