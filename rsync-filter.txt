@@ -1,0 +1,9 @@
++ */
++ /README.md
++ /requirements.txt
++ /.gitignore
++ /src/**
++ /tests/**
++ /v2/**
++ /config/accounts_template.json
+- *

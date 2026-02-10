@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Credentials and configs
+credentials/*.json
+config/accounts.json
+*.pickle
+
+# Logs and data
+logs/*
+data/*
+!logs/.gitkeep
+!data/.gitkeep
+reports/*
+!reports/.gitkeep
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# MacOS
+.DS_Store

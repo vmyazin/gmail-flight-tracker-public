@@ -1,0 +1,8 @@
+{
+    "accounts": [
+        {
+            "name": "personal",
+            "credentials_path": "credentials/credentials_personal.json"
+        }
+    ]
+}
